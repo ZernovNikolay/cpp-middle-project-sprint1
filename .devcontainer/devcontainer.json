@@ -4,6 +4,7 @@
       "dockerfile": "./Dockerfile",
       "context": "."
   },
+  "remoteUser": "dev",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "customizations": {
     "vscode": {
@@ -17,5 +18,6 @@
   },
   "mounts": [
     "source=${env:HOME}/.gitconfig,target=/etc/gitconfig,type=bind,consistency=cached"
-  ]
+  ],
+  "postStartCommand": "sudo chown -R dev:dev /workspaces/${localWorkspaceFolderBasename}"
 }
