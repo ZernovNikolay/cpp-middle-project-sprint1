@@ -24,9 +24,6 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> pImpl_;
-
-private:
-    enum CifherMode { DECRYPT, ENCRYPT };
 };
 
 }  // namespace CryptoGuard

@@ -19,8 +19,12 @@ protected:
 // Те
 TEST_F(CipherTest, EncryptDecryptRoundtrip) {
     std::stringstream input(plaintext_);
+    std::stringstream input_second(plaintext_);
     std::stringstream encrypted;
     std::stringstream decrypted;
+
+    std::string old_checksum;
+    EXPECT_NO_THROW(old_checksum = ctx_->CalculateChecksum(input_second));
 
     EXPECT_NO_THROW(ctx_->EncryptFile(input, encrypted, password_))
         << "Процесс шифровки должен быть корректен в данном случае";
@@ -34,9 +38,8 @@ TEST_F(CipherTest, EncryptDecryptRoundtrip) {
         << "Изначальный текст и полученный в результате шифровки/дешифровки должны быть одинаковы";
 
     // Проверка совпадения начальной и конечной контрольной суммы
-    std::stringstream input_second(plaintext_);
     decrypted.seekg(0);
-    EXPECT_EQ(ctx_->CalculateChecksum(input_second), ctx_->CalculateChecksum(decrypted))
+    EXPECT_EQ(old_checksum, ctx_->CalculateChecksum(decrypted))
         << "Контрольные суммы для изначального и полученного текста должны быть одинаковы";
 }
 
@@ -138,82 +141,81 @@ TEST_F(CipherTest, MultipleOperations) {
     EXPECT_EQ("Second message", decrypted2.str());
 }
 
-TEST_F(CipherTest, InvalidInputOutputStreams) {
-    // 1. Невалидный входной поток (badbit)
-    {
-        std::stringstream bad_input;
-        bad_input.setstate(std::ios::badbit);  // Имитируем аппаратный сбой
-        std::stringstream output;
+// 1. Невалидный входной поток (badbit)
+TEST_F(CipherTest, InvalidInputStream_BadBit) {
+    std::stringstream bad_input;
+    bad_input.setstate(std::ios::badbit);  // Имитируем аппаратный сбой
+    std::stringstream output;
 
-        EXPECT_NO_THROW(
-            try {
-                ctx_->EncryptFile(bad_input, output, "pass2");
-                FAIL() << "При работе с невалидным входным потоком (badbit) должно выбрасываться исключение";
-            } catch (const std::runtime_error &e) {
-                std::string msg = e.what();
-                EXPECT_EQ(msg, "Input stream is in bad state")
-                    << "Текст исключения в случае невалидного входного потока (badbit) должен быть \"Input stream is "
-                       "in bad state\" ";
-            })
-            << "Тип исключения при работе с невалидным входным потоком (badbit) должен быть std::runtime_error";
-    }
+    EXPECT_NO_THROW(
+        try {
+            ctx_->EncryptFile(bad_input, output, "pass2");
+            FAIL() << "При работе с невалидным входным потоком (badbit) должно выбрасываться исключение";
+        } catch (const std::runtime_error &e) {
+            std::string msg = e.what();
+            EXPECT_EQ(msg, "Input stream is in bad state")
+                << "Текст исключения в случае невалидного входного потока (badbit) должен быть \"Input stream is "
+                   "in bad state\" ";
+        })
+        << "Тип исключения при работе с невалидным входным потоком (badbit) должен быть std::runtime_error";
+}
 
-    // 2. Невалидный выходной поток
-    {
-        std::stringstream input(plaintext_);
-        std::stringstream bad_output;
-        bad_output.setstate(std::ios::badbit);
+// 2. Невалидный выходной поток
+TEST_F(CipherTest, InvalidOutputStream_BadBit) {
+    std::stringstream input(plaintext_);
+    std::stringstream bad_output;
+    bad_output.setstate(std::ios::badbit);
 
-        EXPECT_NO_THROW(
-            try {
-                ctx_->DecryptFile(input, bad_output, "pass2");
-                FAIL() << "При работе с невалидным выходным потоком (badbit) должно выбрасываться исключение";
-            } catch (const std::runtime_error &e) {
-                std::string msg = e.what();
-                EXPECT_EQ(msg, "Output stream is in bad state")
-                    << "Текст исключения в случае невалидного выходного потока (badbit) должен быть \"Output stream is "
-                       "in bad state\" ";
-            })
-            << "Тип исключения при работе с невалидным выходным потоком (badbit) должен быть std::runtime_error";
-    }
+    EXPECT_NO_THROW(
+        try {
+            ctx_->DecryptFile(input, bad_output, "pass2");
+            FAIL() << "При работе с невалидным выходным потоком (badbit) должно выбрасываться исключение";
+        } catch (const std::runtime_error &e) {
+            std::string msg = e.what();
+            EXPECT_EQ(msg, "Output stream is in bad state")
+                << "Текст исключения в случае невалидного выходного потока (badbit) должен быть \"Output stream is "
+                   "in bad state\" ";
+        })
+        << "Тип исключения при работе с невалидным выходным потоком (badbit) должен быть std::runtime_error";
+}
 
-    // 3. Поток в состоянии fail (логическая ошибка)
-    {
-        std::stringstream fail_input;
-        fail_input.setstate(std::ios::failbit);  // Например, ошибка форматирования
-        std::stringstream output;
+// 3. Поток в состоянии fail (логическая ошибка)
+TEST_F(CipherTest, InvalidInputStream_Fail) {
+    std::stringstream fail_input;
+    fail_input.setstate(std::ios::failbit);  // Например, ошибка форматирования
+    std::stringstream output;
 
-        EXPECT_NO_THROW(
-            try {
-                ctx_->CalculateChecksum(fail_input);
-                FAIL() << "При работе с невалидным входным потоком (failbit) должно выбрасываться исключение";
-            } catch (const std::runtime_error &e) {
-                std::string msg = e.what();
-                EXPECT_EQ(msg, "Input stream is in bad state")
-                    << "Текст исключения в случае невалидного входного потока (failbit) должен быть \"Input stream is "
-                       "in bad state\" ";
-            })
-            << "Тип исключения при работе с невалидным входным потоком (failbit) должен быть std::runtime_error";
-    }
+    EXPECT_NO_THROW(
+        try {
+            ctx_->CalculateChecksum(fail_input);
+            FAIL() << "При работе с невалидным входным потоком (failbit) должно выбрасываться исключение";
+        } catch (const std::runtime_error &e) {
+            std::string msg = e.what();
+            EXPECT_EQ(msg, "Input stream is in bad state")
+                << "Текст исключения в случае невалидного входного потока (failbit) должен быть \"Input stream is "
+                   "in bad state\" ";
+        })
+        << "Тип исключения при работе с невалидным входным потоком (failbit) должен быть std::runtime_error";
+}
 
-    // 4. Поток с выставленным eofbit
-    {
-        std::stringstream eof_input;
-        eof_input.setstate(std::ios::eofbit);  // Достигнут конец файла
-        std::stringstream output;
+// 4. Поток с выставленным eofbit
+TEST_F(CipherTest, InvalidInputStream_EOF) {
 
-        EXPECT_NO_THROW(
-            try {
-                ctx_->EncryptFile(eof_input, output, "pass2");
-                FAIL() << "При работе с невалидным входным потоком (eof) должно выбрасываться исключение";
-            } catch (const std::runtime_error &e) {
-                std::string msg = e.what();
-                EXPECT_EQ(msg, "Input stream is in bad state")
-                    << "Текст исключения в случае невалидного входного потока (eof) должен быть \"Input stream is in "
-                       "bad state\" ";
-            })
-            << "Тип исключения при работе с невалидным входным потоком (eof) должен быть std::runtime_error";
-    }
+    std::stringstream eof_input;
+    eof_input.setstate(std::ios::eofbit);  // Достигнут конец файла
+    std::stringstream output;
+
+    EXPECT_NO_THROW(
+        try {
+            ctx_->EncryptFile(eof_input, output, "pass2");
+            FAIL() << "При работе с невалидным входным потоком (eof) должно выбрасываться исключение";
+        } catch (const std::runtime_error &e) {
+            std::string msg = e.what();
+            EXPECT_EQ(msg, "Input stream is in bad state")
+                << "Текст исключения в случае невалидного входного потока (eof) должен быть \"Input stream is in "
+                   "bad state\" ";
+        })
+        << "Тип исключения при работе с невалидным входным потоком (eof) должен быть std::runtime_error";
 }
 
 // провека работы алгоритма на заранее заданных примерах

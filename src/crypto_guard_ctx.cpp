@@ -21,32 +21,8 @@ struct AesCipherParams {
     std::array<unsigned char, IV_SIZE> iv;    // Initialization vector
 };
 
-class StreamGuard {
-public:
-    StreamGuard(std::iostream &stream, std::string_view name) : stream_(stream) {
-        if (!stream_.good())
-            throw std::runtime_error(std::string(name) + " stream is in bad state");
-        pos_ = stream_.tellg();
-        if (pos_ == std::streampos(-1))
-            throw std::runtime_error("Can't determine " + std::string(name) + " stream position");
-    }
-
-    ~StreamGuard() {
-        stream_.clear();      // Сброс ошибок перед выходом
-        stream_.seekg(pos_);  // Восстановление позиции
-    }
-
-    class bad_stream : public std::runtime_error {
-        using runtime_error::runtime_error;
-    };
-
-private:
-    std::iostream &stream_;
-    std::streampos pos_;
-};
-
 std::string get_openssl_error() {
-    std::vector<char> buf(256);
+    std::array<char, 256> buf;
     unsigned long err_code;
     std::string error_msg;
 
@@ -63,6 +39,11 @@ std::string get_openssl_error() {
 
 class CryptoGuardCtx::Impl {
 
+    // вспомогательные структуры
+public:
+    enum CifherMode { DECRYPT, ENCRYPT };
+
+    // методы
 public:
     Impl() {
         OpenSSL_add_all_algorithms();
@@ -71,6 +52,18 @@ public:
 
     ~Impl() { EVP_cleanup(); }
 
+    Impl(const Impl &) = delete;
+    Impl &operator=(const Impl &) = delete;
+
+    Impl(Impl &&other) = default;
+    Impl &operator=(Impl &&other) = default;
+
+    void ProcessFile(std::iostream &inStream, std::iostream &outStream, std::string_view password,
+                     CryptoGuardCtx::Impl::CifherMode mode);
+    std::string CalculateChecksum(std::iostream &inStream);
+
+    // вспомогательные структуры
+private:
     struct EVP_Cipher_Deleter {
         void operator()(EVP_CIPHER_CTX *ptr) const { EVP_CIPHER_CTX_free(ptr); }
     };
@@ -79,25 +72,20 @@ public:
         void operator()(EVP_MD_CTX *ptr) const { EVP_MD_CTX_free(ptr); }
     };
 
-    // Приватный интерфейс для нового алгоритма шифрования пары чисел
-
-    void ProcessFile(std::iostream &inStream, std::iostream &outStream, std::string_view password,
-                     CryptoGuardCtx::CifherMode mode);
-    std::string CalculateChecksum(std::iostream &inStream);
-
+    // методы
 private:
-    void ProcessCifher(std::unique_ptr<EVP_CIPHER_CTX, EVP_Cipher_Deleter> ctx, std::iostream &input,
+    void ProcessCifher(const std::unique_ptr<EVP_CIPHER_CTX, EVP_Cipher_Deleter> &ctx, std::iostream &input,
                        std::iostream &output);
     AesCipherParams CreateChiperParamsFromPassword(std::string_view password);
 };
 
 void CryptoGuardCtx::Impl::ProcessFile(std::iostream &inStream, std::iostream &outStream, std::string_view password,
-                                       CryptoGuardCtx::CifherMode mode) {
+                                       CryptoGuardCtx::Impl::CifherMode mode) {
 
-    {
-        StreamGuard guard_in(inStream, "Input");
-        StreamGuard guard_out(outStream, "Output");
-    }
+    if (!inStream.good())
+        throw std::runtime_error("Input stream is in bad state");
+    if (!outStream.good())
+        throw std::runtime_error("Output stream is in bad state");
 
     ERR_clear_error();
 
@@ -109,14 +97,13 @@ void CryptoGuardCtx::Impl::ProcessFile(std::iostream &inStream, std::iostream &o
     // Инициализируем cipher
     EVP_CipherInit_ex(evp_ctx.get(), params.cipher, nullptr, params.key.data(), params.iv.data(), params.encrypt);
 
-    ProcessCifher(std::move(evp_ctx), inStream, outStream);
+    ProcessCifher(evp_ctx, inStream, outStream);
 }
 
 std::string CryptoGuardCtx::Impl::CalculateChecksum(std::iostream &inStream) {
 
-    {
-        StreamGuard guard_in(inStream, "Input");
-    }
+    if (!inStream.good())
+        throw std::runtime_error("Input stream is in bad state");
 
     ERR_clear_error();
 
@@ -139,15 +126,16 @@ std::string CryptoGuardCtx::Impl::CalculateChecksum(std::iostream &inStream) {
         inStream.read(reinterpret_cast<char *>(buffer.data()), buffer.size());
         const auto bytes_read = inStream.gcount();
 
+        // если поток испортился - данные скомпроментированы (не закончился, а именно испортился)
+        if (!(inStream.good() || inStream.eof()))
+            throw std::runtime_error("Stream read operation failed");
+
         if (bytes_read > 0 && EVP_DigestUpdate(mdctx.get(), buffer.data(), bytes_read) != 1)
             throw std::runtime_error("Failed to update digest: " + get_openssl_error());
 
         // Проверяем состояние после чтения
         if (inStream.eof())
             break;
-
-        if (!inStream.good())
-            throw std::runtime_error("Stream read operation failed");
     }
 
     // 4. Получаем финальный хеш
@@ -165,10 +153,10 @@ std::string CryptoGuardCtx::Impl::CalculateChecksum(std::iostream &inStream) {
     return oss.str();
 }
 
-void CryptoGuardCtx::Impl::ProcessCifher(std::unique_ptr<EVP_CIPHER_CTX, EVP_Cipher_Deleter> ctx, std::iostream &input,
-                                         std::iostream &output) {
+void CryptoGuardCtx::Impl::ProcessCifher(const std::unique_ptr<EVP_CIPHER_CTX, EVP_Cipher_Deleter> &ctx,
+                                         std::iostream &input, std::iostream &output) {
 
-    size_t buf_size = 1024;
+    const size_t buf_size = 1024;
     std::vector<unsigned char> outBuf(buf_size + EVP_MAX_BLOCK_LENGTH);
     std::vector<unsigned char> inBuf(buf_size);
     int outLen;
@@ -177,8 +165,13 @@ void CryptoGuardCtx::Impl::ProcessCifher(std::unique_ptr<EVP_CIPHER_CTX, EVP_Cip
         input.read(reinterpret_cast<char *>(inBuf.data()), inBuf.size());
         const auto bytes_read = input.gcount();
 
+        // если поток испортился - данные скомпроментированы (не закончился, а именно испортился)
+        if (!(input.good() || input.eof()))
+            throw std::runtime_error("Stream read operation failed");
+
         // Если прочитали хоть что-то
         if (bytes_read > 0) {
+
             if (!EVP_CipherUpdate(ctx.get(), outBuf.data(), &outLen, inBuf.data(), static_cast<int>(bytes_read)))
                 throw std::runtime_error("OpenSSL CipherUpdate operation failed: " + get_openssl_error());
 
@@ -193,10 +186,6 @@ void CryptoGuardCtx::Impl::ProcessCifher(std::unique_ptr<EVP_CIPHER_CTX, EVP_Cip
         // Проверяем состояние после чтения
         if (input.eof())
             break;
-
-        if (!input.good()) {
-            throw std::runtime_error("Stream read operation failed");
-        }
     }
 
     if (!EVP_CipherFinal_ex(ctx.get(), outBuf.data(), &outLen))
@@ -227,10 +216,10 @@ CryptoGuardCtx::~CryptoGuardCtx() = default;
 
 // API
 void CryptoGuardCtx::EncryptFile(std::iostream &inStream, std::iostream &outStream, std::string_view password) {
-    pImpl_->ProcessFile(inStream, outStream, password, CifherMode::ENCRYPT);
+    pImpl_->ProcessFile(inStream, outStream, password, CryptoGuardCtx::Impl::CifherMode::ENCRYPT);
 }
 void CryptoGuardCtx::DecryptFile(std::iostream &inStream, std::iostream &outStream, std::string_view password) {
-    pImpl_->ProcessFile(inStream, outStream, password, CifherMode::DECRYPT);
+    pImpl_->ProcessFile(inStream, outStream, password, CryptoGuardCtx::Impl::CifherMode::DECRYPT);
 }
 std::string CryptoGuardCtx::CalculateChecksum(std::iostream &inStream) { return pImpl_->CalculateChecksum(inStream); }
 
