@@ -59,9 +59,9 @@ int main(int argc, char *argv[]) {
 
             std::fstream input_stream = open_file(options.GetInputFile());
 
-            cryptoCtx.CalculateChecksum(input_stream);
+            std::string checksum = cryptoCtx.CalculateChecksum(input_stream);
 
-            std::print("Checksum: {}\n", "CHECKSUM_NOT_IMPLEMENTED");
+            std::print("Checksum: {}\n", checksum);
             break;
         }
         default:

@@ -16,7 +16,6 @@ protected:
     std::string password_;
 };
 
-// Те
 TEST_F(CipherTest, EncryptDecryptRoundtrip) {
     std::stringstream input(plaintext_);
     std::stringstream input_second(plaintext_);
@@ -58,6 +57,8 @@ TEST_F(CipherTest, EmptyInputEncode) {
     EXPECT_TRUE(decrypted.str().empty()) << "Дешифрованный текст от изначального пустого должен быть пустым";
 }
 
+// Тест на корректность шифровки\дешифровки
+// и того, что попытка дешифровки с неверным паролем не портит данные
 TEST_F(CipherTest, PasswordChange) {
     std::stringstream input(plaintext_);
     std::stringstream encrypted;
@@ -187,7 +188,7 @@ TEST_F(CipherTest, InvalidInputStream_Fail) {
 
     EXPECT_NO_THROW(
         try {
-            ctx_->CalculateChecksum(fail_input);
+            std::string sum = ctx_->CalculateChecksum(fail_input);
             FAIL() << "При работе с невалидным входным потоком (failbit) должно выбрасываться исключение";
         } catch (const std::runtime_error &e) {
             std::string msg = e.what();
@@ -241,4 +242,29 @@ TEST_F(CipherTest, BinaryDataChecksum) {
     std::stringstream input(binary_data);
     std::string result = ctx_->CalculateChecksum(input);
     EXPECT_EQ(result.size(), 64);
+}
+
+TEST_F(CipherTest, CheckAPIStability) {
+
+    std::stringstream input(plaintext_);
+    std::stringstream encrypted_first;
+    std::stringstream decrypted;
+
+    EXPECT_NO_THROW(ctx_->EncryptFile(input, encrypted_first, password_))
+        << "Процесс шифровки должен быть корректен в данном случае";
+
+    std::stringstream encrypted(encrypted_first.str());
+    
+    for(size_t i = 0; i < 10000; ++i){
+        decrypted.seekp(0);
+        encrypted.clear();
+        encrypted.seekg(0);
+        EXPECT_NO_THROW(ctx_->DecryptFile(encrypted, decrypted, password_))
+        << "Процесс дешифровки должен быть корректен в данном случае (пароль верный)";
+
+        EXPECT_EQ(plaintext_, decrypted.str())
+            << "Результат не должен меняться с течением времени";
+    }
+
+
 }

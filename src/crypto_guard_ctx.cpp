@@ -60,7 +60,7 @@ public:
 
     void ProcessFile(std::iostream &inStream, std::iostream &outStream, std::string_view password,
                      CryptoGuardCtx::Impl::CifherMode mode);
-    std::string CalculateChecksum(std::iostream &inStream);
+    [[nodiscard]] std::string CalculateChecksum(std::iostream &inStream);
 
     // вспомогательные структуры
 private:
